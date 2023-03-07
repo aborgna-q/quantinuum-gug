@@ -1,6 +1,6 @@
 use std::{
     any::{Any, TypeId},
-    collections::HashMap,
+    collections::HashMap, fmt::Debug,
 };
 
 use downcast_rs::{impl_downcast, Downcast};
@@ -15,19 +15,18 @@ use crate::{
     },
     macros::impl_box_clone,
     rewrite::GugRewrite,
-    DebugData,
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct Gug {
     pub(crate) graph: PortGraph,
     hierarchy: Hierarchy,
-    debug_data: SecondaryMap<NodeIndex, DebugData>,
-    op_types: SecondaryMap<NodeIndex, Op>,
-    node_metadata: HashMap<TypeId, SecondaryMap<NodeIndex, Box<dyn NodeMetadata>>>,
 
+    op_types: SecondaryMap<NodeIndex, Op>,
     port_types: SecondaryMap<PortIndex, WireType>,
-    port_metadata: HashMap<TypeId, SecondaryMap<PortIndex, Box<dyn NodeMetadata>>>,
+
+    node_metadata: HashMap<TypeId, SecondaryMap<NodeIndex, Box<dyn NodeMetadata>>>,
+    port_metadata: HashMap<TypeId, SecondaryMap<PortIndex, Box<dyn PortMetadata>>>,
 }
 
 impl Gug {
@@ -42,9 +41,18 @@ impl Gug {
         }
     }
 
-    pub fn add_node_metadata<T: NodeMetadata + Default>(&mut self) {
-        self.node_metadata.insert(
-            TypeId::of::<T>(),
+    /// Initialize a new node metadata component.
+    /// If the metadata component already exists, this does nothing.
+    pub fn register_node_metadata<T: NodeMetadata + Default>(&mut self) {
+        self.node_metadata.entry(TypeId::of::<T>()).or_insert(
+            SecondaryMap::with_default(Box::<T>::default()),
+        );
+    }
+
+    /// Initialize a new port metadata component.
+    /// If the metadata component already exists, this does nothing.
+    pub fn register_port_metadata<T: PortMetadata + Default>(&mut self) {
+        self.port_metadata.entry(TypeId::of::<T>()).or_insert(
             SecondaryMap::with_default(Box::<T>::default()),
         );
     }
@@ -64,14 +72,32 @@ impl Gug {
         self.optype(node).signature()
     }
 
-    pub fn metadata<T: NodeMetadata>(&self, node: NodeIndex) -> Option<&T> {
+    /// Gets a reference to the node metadata map for the given node component.
+    /// Returns `None` if the metadata component has not been registered.
+    pub fn node_metadata<T: NodeMetadata>(&self, node: NodeIndex) -> Option<&T> {
         let metadata = self.node_metadata.get(&TypeId::of::<T>())?;
         metadata.get(node).downcast_ref::<T>()
     }
 
-    pub fn metadata_mut<T: NodeMetadata>(&mut self, node: NodeIndex) -> Option<&mut T> {
+    /// Gets a mutable reference to the node metadata map for the given node component.
+    /// Returns `None` if the metadata component has not been registered.
+    pub fn node_metadata_mut<T: NodeMetadata>(&mut self, node: NodeIndex) -> Option<&mut T> {
         let metadata = self.node_metadata.get_mut(&TypeId::of::<T>())?;
         metadata.get_mut(node).downcast_mut::<T>()
+    }
+
+    /// Gets a reference to the port metadata map for the given port component.
+    /// Returns `None` if the metadata component has not been registered.
+    pub fn port_metadata<T: PortMetadata>(&self, port: PortIndex) -> Option<&T> {
+        let metadata = self.port_metadata.get(&TypeId::of::<T>())?;
+        metadata.get(port).downcast_ref::<T>()
+    }
+
+    /// Gets a mutable reference to the port metadata map for the given port component.
+    /// Returns `None` if the metadata component has not been registered.
+    pub fn port_metadata_mut<T: PortMetadata>(&mut self, port: PortIndex) -> Option<&mut T> {
+        let metadata = self.port_metadata.get_mut(&TypeId::of::<T>())?;
+        metadata.get_mut(port).downcast_mut::<T>()
     }
 
     /// Applies a rewrite to the graph.
@@ -80,7 +106,6 @@ impl Gug {
         let (rewrite, mut replacement) = rewrite.into_parts();
 
         let node_inserted = |old, new| {
-            std::mem::swap(&mut self.debug_data[new], &mut replacement.debug_data[old]);
             std::mem::swap(&mut self.op_types[new], &mut replacement.op_types[old]);
             for (type_id, replacement_meta) in replacement.node_metadata.iter_mut() {
                 if let Some(meta) = self.node_metadata.get_mut(type_id) {
@@ -107,23 +132,12 @@ impl Gug {
     }
 }
 
-impl std::fmt::Debug for Gug {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GUG")
-            .field("graph", &self.graph)
-            .field("hierarchy", &self.hierarchy)
-            .field("debug_data", &self.debug_data)
-            .field("op_types", &self.op_types)
-            .finish()
-    }
-}
-
-pub trait NodeMetadata: Send + Sync + Any + Downcast + NodeMetadataBoxClone {}
+pub trait NodeMetadata: Send + Sync + Debug + Any + Downcast + NodeMetadataBoxClone {}
 
 impl_downcast!(NodeMetadata);
 impl_box_clone!(NodeMetadata, NodeMetadataBoxClone);
 
-pub trait PortMetadata: Send + Sync + Any + Downcast + PortMetadataBoxClone {}
+pub trait PortMetadata: Send + Sync + Debug + Any + Downcast + PortMetadataBoxClone {}
 
 impl_downcast!(PortMetadata);
 impl_box_clone!(PortMetadata, PortMetadataBoxClone);

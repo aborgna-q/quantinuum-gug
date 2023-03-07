@@ -16,11 +16,9 @@ pub enum WireType {
     F64,
     Quat64,
     Angle,
-    /*
-    TODO should control edges be part of signatures or can they be added to
-    any node?
-    */
-    Control,
+    /// A wire that carries no explicit information, but represents restricts
+    /// the ordering of operations due to external side effects.
+    SideEffects,
 }
 
 impl Default for WireType {
